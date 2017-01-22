@@ -1,1 +1,4 @@
 # sigen
+
+cargo build
+
