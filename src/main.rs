@@ -46,10 +46,10 @@ fn generate_combo<T: Fn(f32,f32,f32,f32) -> f32>(file:&str, freq:f32, dur:u32, s
     let k = n / WAV_SPEC.sample_rate / period;
     let t = n as f32 / WAV_SPEC.sample_rate as f32;
     let p = (k * phase) as f32;
-    let left_chan = if t < ((k * period + dur) as f32) {shape(ampl, freq, 0.0, t)} else {silence(ampl, freq, 0.0, t)} as i16;
-    let right_chan = if t < ((k * period + dur) as f32) {shape(ampl, freq, p, t)} else {silence(ampl, freq, p, t)} as i16;
-    writer.write_sample(left_chan).unwrap();
-    writer.write_sample(right_chan).unwrap();
+    let (left_chan, right_chan) = if t < ((k * period + dur) as f32) {(shape(ampl, freq, 0.0, t), shape(ampl, freq, p, t))} 
+                                  else {(silence(ampl, freq, 0.0, t), silence(ampl, freq, p, t))};
+    writer.write_sample(left_chan as i16).unwrap();
+    writer.write_sample(right_chan as i16).unwrap();
   }
 }
 
