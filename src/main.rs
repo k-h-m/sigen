@@ -5,6 +5,12 @@ use std::f32::consts::PI;
 use std::i16;
 use clap::{App, Arg, SubCommand};
 
+const WAV_SPEC: hound::WavSpec = hound::WavSpec {
+    channels: 2,
+    sample_rate: 44100,
+    bits_per_sample: 16,
+    sample_format: hound::SampleFormat::Int };
+
 fn silence(_ampl:f32, _freq:f32, _phase:f32, _x:f32) -> f32 {
   0.0
 }
@@ -19,16 +25,11 @@ fn sine(ampl:f32, freq:f32, phase:f32, x:f32) -> f32 {
 }
 
 fn generate_plain<T: Fn(f32,f32,f32,f32) -> f32>(file:&str, freq:f32, dur:u32, phase:f32, shape:T) -> () {
-  let spec = hound::WavSpec {
-    channels: 2,
-    sample_rate: 44100,
-    bits_per_sample: 16,
-    sample_format: hound::SampleFormat::Int };
-  let num_samples = spec.sample_rate * dur;
+  let num_samples = WAV_SPEC.sample_rate * dur;
   let ampl = i16::MAX as f32;
-  let mut writer = hound::WavWriter::create(file, spec).unwrap();
+  let mut writer = hound::WavWriter::create(file, WAV_SPEC).unwrap();
   for n in 0 .. num_samples {
-    let t = n as f32 / spec.sample_rate as f32;
+    let t = n as f32 / WAV_SPEC.sample_rate as f32;
     let left_chan = shape(ampl, freq, 0.0, t) as i16;
     let right_chan = shape(ampl, freq, phase, t) as i16;
     writer.write_sample(left_chan).unwrap();
@@ -37,18 +38,13 @@ fn generate_plain<T: Fn(f32,f32,f32,f32) -> f32>(file:&str, freq:f32, dur:u32, p
 }
 
 fn generate_combo<T: Fn(f32,f32,f32,f32) -> f32>(file:&str, freq:f32, dur:u32, sil:u32, phase:u32, shape:T) -> () {
-  let spec = hound::WavSpec {
-    channels: 2,
-    sample_rate: 44100,
-    bits_per_sample: 16,
-    sample_format: hound::SampleFormat::Int };
   let period = dur + sil; 
-  let num_samples = spec.sample_rate * period * (1 + 360 / phase);
+  let num_samples = WAV_SPEC.sample_rate * period * (1 + 360 / phase);
   let ampl = i16::MAX as f32;
-  let mut writer = hound::WavWriter::create(file, spec).unwrap();
+  let mut writer = hound::WavWriter::create(file, WAV_SPEC).unwrap();
   for n in 0 .. num_samples {
-    let k = n / spec.sample_rate / period;
-    let t = n as f32 / spec.sample_rate as f32;
+    let k = n / WAV_SPEC.sample_rate / period;
+    let t = n as f32 / WAV_SPEC.sample_rate as f32;
     let p = (k * phase) as f32;
     let left_chan = if t < ((k * period + dur) as f32) {shape(ampl, freq, 0.0, t)} else {silence(ampl, freq, 0.0, t)} as i16;
     let right_chan = if t < ((k * period + dur) as f32) {shape(ampl, freq, p, t)} else {silence(ampl, freq, p, t)} as i16;
