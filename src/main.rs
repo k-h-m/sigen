@@ -16,12 +16,12 @@ fn silence(_ampl:f32, _freq:f32, _phase:f32, _x:f32) -> f32 {
 }
 
 fn square(ampl:f32, freq:f32, phase:f32, x:f32) -> f32 {
-  let arg = freq * x + phase / 360.0;
-  if arg.fract() < 0.5 {ampl} else {-1.0 * ampl}
+  let arg = freq*x + phase/360.0;
+  if arg.fract() < 0.5 {ampl} else {-ampl}
 }
 
 fn sine(ampl:f32, freq:f32, phase:f32, x:f32) -> f32 {
-  ampl * (2.0 * PI * (freq * x + phase/360.0)).sin()
+  ampl*(2.0*PI*(freq*x + phase/360.0)).sin()
 }
 
 fn generate_plain<T: Fn(f32,f32,f32,f32) -> f32>(file:&str, freq:f32, dur:u32, phase:f32, shape:T) -> () {
