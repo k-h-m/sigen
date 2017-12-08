@@ -40,8 +40,26 @@ impl Gen for Square {
     }
 
     fn gen(&self, x: f32) -> i16 {
-        let arg = self.freq * x + self.phase / 360.0;
-        if arg.fract() < 0.5 {self.ampl as i16} else {-self.ampl as i16}
+        let arg = (self.freq * x + self.phase / 360.0).fract();
+        if arg < 0.5 {self.ampl as i16} else {-self.ampl as i16}
+    }
+}
+
+struct Saw {
+    ampl: f32,
+    freq: f32,
+    phase: f32
+}
+
+impl Gen for Saw {
+    fn new(ampl: f32, freq: f32, phase: f32) -> Saw {
+        Saw {ampl, freq, phase}
+    }
+
+    fn gen(&self, x: f32) -> i16 {
+        let arg = (self.freq * x + self.phase / 360.0).fract();
+        if arg < 0.5 {(self.ampl * (1.0 - 4.0 * arg)) as i16}
+        else {(self.ampl * (4.0 * arg - 3.0)) as i16}
     }
 }
 
@@ -136,7 +154,7 @@ fn main() {
         .required(true)
         .index(3))
       .arg(Arg::with_name("SHAPE")
-        .help("signal shape: sine, square")
+        .help("signal shape: sine, square, saw")
         .required(true)
         .index(4))
       .arg(Arg::with_name("OUTPUT")
@@ -162,7 +180,7 @@ fn main() {
         .required(true)
         .index(4))
       .arg(Arg::with_name("SHAPE")
-        .help("signal shape: sine, square")
+        .help("signal shape: sine, square, saw")
         .required(true)
         .index(5))
       .arg(Arg::with_name("OUTPUT")
@@ -181,6 +199,8 @@ fn main() {
         write_plain::<Sine>(file, dur, freq, phase),
       "square" =>
         write_plain::<Square>(file, dur, freq, phase),
+      "saw" =>
+        write_plain::<Saw>(file, dur, freq, phase),
       _ =>
         panic!("Invalid value of SHAPE")
     }
@@ -196,6 +216,8 @@ fn main() {
         write_combo::<Sine, Silence>(file, dur, sil, freq, phase),
       "square" =>
         write_combo::<Square, Silence>(file, dur, sil, freq, phase),
+      "saw" =>
+        write_combo::<Saw, Silence>(file, dur, sil, freq, phase),
       _ =>
         panic!("Invalid value of SHAPE")
     }
