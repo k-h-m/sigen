@@ -56,6 +56,22 @@ impl Gen for Saw {
     fn gen(&self, x: f32) -> i16 {
         assert!(x >= 0.0);
         assert!(x < 1.0);
+        (self.ampl * (2.0 * x - 1.0)) as i16
+    }
+}
+
+struct Triangle {
+    ampl: f32
+}
+
+impl Gen for Triangle {
+    fn new(ampl: f32) -> Triangle {
+        Triangle {ampl}
+    }
+
+    fn gen(&self, x: f32) -> i16 {
+        assert!(x >= 0.0);
+        assert!(x < 1.0);
         if x < 0.5 {(self.ampl * (1.0 - 4.0 * x)) as i16}
         else {(self.ampl * (4.0 * x - 3.0)) as i16}
     }
@@ -173,7 +189,7 @@ fn main() {
         .required(true)
         .index(4))
       .arg(Arg::with_name("SHAPE")
-        .help("signal shape: sine, square, saw")
+        .help("signal shape: sine, square, saw, triangle")
         .required(true)
         .index(5))
       .arg(Arg::with_name("OUTPUT")
@@ -203,7 +219,7 @@ fn main() {
         .required(true)
         .index(5))
       .arg(Arg::with_name("SHAPE")
-        .help("signal shape: sine, square, saw")
+        .help("signal shape: sine, square, saw, triangle")
         .required(true)
         .index(6))
       .arg(Arg::with_name("OUTPUT")
@@ -223,6 +239,8 @@ fn main() {
         write_plain::<Sine>(file, dur, freq, phase, rate),
       "square" =>
         write_plain::<Square>(file, dur, freq, phase, rate),
+      "triangle" =>
+        write_plain::<Triangle>(file, dur, freq, phase, rate),
       "saw" =>
         write_plain::<Saw>(file, dur, freq, phase, rate),
       _ =>
@@ -241,6 +259,8 @@ fn main() {
         write_combo::<Sine, Silence>(file, dur, sil, freq, phase, rate),
       "square" =>
         write_combo::<Square, Silence>(file, dur, sil, freq, phase, rate),
+      "triangle" =>
+        write_combo::<Triangle, Silence>(file, dur, sil, freq, phase, rate),
       "saw" =>
         write_combo::<Saw, Silence>(file, dur, sil, freq, phase, rate),
       _ =>
