@@ -119,16 +119,13 @@ impl<T: Gen> Iterator for Ticks<T> {
         if self.curr_tick > self.last_tick {
             return None
         }
-        let mut t = self.t;
-        if t < self.sample_rate {
-            self.t += self.freq;
+        if self.t >= self.sample_rate {
+            self.t -= self.sample_rate;
         }
-        else {
-            t = t - self.sample_rate;
-            self.t = t + self.freq;
-        }
+        let t = self.t / self.sample_rate;
         self.curr_tick += 1;
-        return Some(self.generator.gen(t / self.sample_rate))
+        self.t += self.freq;
+        return Some(self.generator.gen(t))
     }
 }
 
