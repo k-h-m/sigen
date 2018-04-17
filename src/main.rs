@@ -7,135 +7,106 @@ use clap::{App, Arg, SubCommand};
 
 
 trait Gen {
-    fn new(ampl: f32) -> Self;
-    fn gen(&self, x: f32) -> i16;
+    fn gen(f32) -> f32;
 }
 
-struct Sine {
-    ampl: f32
-}
+struct Sine {}
 
 impl Gen for Sine {
-    fn new(ampl: f32) -> Sine {
-        Sine {ampl}
-    }
-
-    fn gen(&self, x: f32) -> i16 {
-        assert!(x >= 0.0);
-        assert!(x < 1.0);
-        let arg = 2.0 * PI * x;
-        (self.ampl * arg.sin()) as i16
+    fn gen(x: f32) -> f32 {
+        assert!(x >= 0.0 && x < 1.0);
+        (2.0 * PI * x).sin()
     }
 }
 
-struct Square {
-    ampl: f32
-}
+struct Square {}
 
 impl Gen for Square {
-    fn new(ampl: f32) -> Square {
-        Square {ampl}
-    }
-
-    fn gen(&self, x: f32) -> i16 {
-        assert!(x >= 0.0);
-        assert!(x < 1.0);
-        if x < 0.5 {self.ampl as i16} else {-self.ampl as i16}
+    fn gen(x: f32) -> f32 {
+        assert!(x >= 0.0 && x < 1.0);
+        if x < 0.5 {1.0} else {-1.0}
     }
 }
 
-struct Saw {
-    ampl: f32
-}
+struct Saw {}
 
 impl Gen for Saw {
-    fn new(ampl: f32) -> Saw {
-        Saw {ampl}
-    }
-
-    fn gen(&self, x: f32) -> i16 {
-        assert!(x >= 0.0);
-        assert!(x < 1.0);
-        (self.ampl * (2.0 * x - 1.0)) as i16
+    fn gen(x: f32) -> f32 {
+        assert!(x >= 0.0 && x < 1.0);
+        2.0 * x - 1.0
     }
 }
 
-struct Triangle {
-    ampl: f32
-}
+struct Triangle {}
 
 impl Gen for Triangle {
-    fn new(ampl: f32) -> Triangle {
-        Triangle {ampl}
-    }
-
-    fn gen(&self, x: f32) -> i16 {
-        assert!(x >= 0.0);
-        assert!(x < 1.0);
-        if x < 0.5 {(self.ampl * (1.0 - 4.0 * x)) as i16}
-        else {(self.ampl * (4.0 * x - 3.0)) as i16}
+    fn gen(x: f32) -> f32 {
+        assert!(x >= 0.0 && x < 1.0);
+        if x < 0.5 {1.0 - 4.0 * x} else {4.0 * x - 3.0}
     }
 }
 
 struct Silence {}
 
 impl Gen for Silence {
-    fn new(_ampl: f32) -> Silence {
-        Silence {}
-    }
-
-    fn gen(&self, _x: f32) -> i16 {
-        0
+    fn gen(x: f32) -> f32 {
+        assert!(x >= 0.0 && x < 1.0);
+        0.0
     }
 }
 
-struct Ticks<T: Gen> {
+struct Tick {
     curr_tick: u32,
     last_tick: u32,
     sample_rate: f32,
     freq: f32,
-    t: f32,
-    generator: T
+    left: f32,
+    right: f32
 }
 
-impl<T: Gen> Ticks<T> {
-    fn new(duration: f32, sample_rate: f32, freq: f32, phase: f32, generator: T) -> Ticks<T> {
+impl Tick {
+    fn new(duration: f32, sample_rate: f32, freq: f32, phase_left: f32, phase_right: f32) -> Tick {
         assert!(duration >= 0.0);
         assert!(sample_rate > 0.0);
         assert!(freq > 0.0 && freq < sample_rate);
-        assert!(phase >= 0.0 && phase < 360.0);
-        Ticks { curr_tick: 0,
+        assert!(phase_left >= 0.0 && phase_left < 360.0);
+        assert!(phase_right >= 0.0 && phase_right < 360.0);
+        Tick {  curr_tick: 0,
                 last_tick: (duration * sample_rate) as u32,
-                t: sample_rate * phase / 360.0,
-                sample_rate, freq, generator
+                left: phase_left * sample_rate / 360.0,
+                right: phase_right * sample_rate / 360.0,
+                sample_rate, freq
         }
     }
 }
 
-impl<T: Gen> Iterator for Ticks<T> {
-    type Item = i16;
+impl Iterator for Tick {
+    type Item = (f32,f32);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.curr_tick > self.last_tick {
+        if self.curr_tick >= self.last_tick {
             return None
         }
-        if self.t >= self.sample_rate {
-            self.t -= self.sample_rate;
-        }
-        let t = self.t / self.sample_rate;
         self.curr_tick += 1;
-        self.t += self.freq;
-        return Some(self.generator.gen(t))
+        if self.left >= self.sample_rate {
+            self.left -= self.sample_rate;
+        }
+        if self.right >= self.sample_rate {
+            self.right -= self.sample_rate;
+        }
+        let l = self.left / self.sample_rate;
+        let r = self.right / self.sample_rate;
+        self.left += self.freq;
+        self.right += self.freq;
+        Some((l,r))
     }
 }
 
 fn wrr<T: Gen>(writer: &mut hound::WavWriter<std::io::BufWriter<std::fs::File>>, dur: f32, freq: f32, phase1: f32, phase2: f32, rate: u32) -> () {
   let ampl = i16::MAX as f32;
-  let left = Ticks::new(dur, rate as f32, freq, phase1, T::new(ampl));
-  let right = Ticks::new(dur, rate as f32, freq, phase2, T::new(ampl));
-  for (l,r) in left.zip(right) {
-      writer.write_sample(l).unwrap();
-      writer.write_sample(r).unwrap();
+  for (l,r) in Tick::new(dur, rate as f32, freq, phase1, phase2) {
+      writer.write_sample((ampl * T::gen(l)) as i16).unwrap();
+      writer.write_sample((ampl * T::gen(r)) as i16).unwrap();
   }
 }
 
