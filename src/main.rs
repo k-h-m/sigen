@@ -5,6 +5,7 @@ use std::f32::consts::PI;
 use std::i16;
 use clap::{App, Arg, SubCommand};
 
+const MAX_AMPL: f32 = i16::MAX as f32;
 
 trait Gen {
     fn gen(f32) -> f32;
@@ -102,26 +103,23 @@ impl Iterator for Tick {
     }
 }
 
-fn wrr<T: Gen>(writer: &mut hound::WavWriter<std::io::BufWriter<std::fs::File>>, dur: f32, freq: f32, phase1: f32, phase2: f32, rate: u32) -> () {
-  let ampl = i16::MAX as f32;
-  for (l,r) in Tick::new(dur, rate as f32, freq, phase1, phase2) {
-      writer.write_sample((ampl * T::gen(l)) as i16).unwrap();
-      writer.write_sample((ampl * T::gen(r)) as i16).unwrap();
-  }
-}
-
-fn write_plain<T: Gen>(file: &str, dur: f32, freq: f32, phase: f32, rate: u32) -> () {
+fn plain<T: Gen>(file: &str, dur: f32, freq: f32, phase: f32, rate: u32) -> Result<(), hound::Error> {
   let wav_spec: hound::WavSpec = hound::WavSpec {
     channels: 2,
     sample_rate: rate,
     bits_per_sample: 16,
     sample_format: hound::SampleFormat::Int
   };
-  let mut writer = hound::WavWriter::create(file, wav_spec).unwrap();
-  wrr::<T>(&mut writer, dur, freq, 0.0, phase, rate);
+  let mut writer = hound::WavWriter::create(file, wav_spec)?;
+  for (l,r) in Tick::new(dur, rate as f32, freq, 0.0, phase) {
+      writer.write_sample((MAX_AMPL * T::gen(l)) as i16)?;
+      writer.write_sample((MAX_AMPL * T::gen(r)) as i16)?;
+  }
+  Ok(())
 }
 
-fn write_combo<T1: Gen, T2: Gen>(file:&str, dur1: f32, dur2: f32, freq:f32, shift: f32, rate: u32) -> () {
+fn combo<T1, T2>(file:&str, dur1: f32, dur2: f32, freq:f32, shift: f32, rate: u32) -> Result<(), hound::Error>
+    where T1: Gen, T2: Gen {
   assert!(shift > 0.0);
   let wav_spec: hound::WavSpec = hound::WavSpec {
     channels: 2,
@@ -129,11 +127,18 @@ fn write_combo<T1: Gen, T2: Gen>(file:&str, dur1: f32, dur2: f32, freq:f32, shif
     bits_per_sample: 16,
     sample_format: hound::SampleFormat::Int
   };
-  let mut writer = hound::WavWriter::create(file, wav_spec).unwrap();
-  for n in 0 .. (360.0/shift) as usize {
-    wrr::<T1>(&mut writer, dur1, freq, 0.0, shift * (n as f32), rate);
-    wrr::<T2>(&mut writer, dur2, freq, 0.0, shift * (n as f32), rate);
+  let mut writer = hound::WavWriter::create(file, wav_spec)?;
+  for n in 0 .. (360.0 / shift) as usize {
+    for (l,r) in Tick::new(dur1, rate as f32, freq, 0.0, shift * (n as f32)) {
+        writer.write_sample((MAX_AMPL * T1::gen(l)) as i16)?;
+        writer.write_sample((MAX_AMPL * T1::gen(r)) as i16)?;
+    }
+    for (l,r) in Tick::new(dur2, rate as f32, freq, 0.0, shift * (n as f32)) {
+        writer.write_sample((MAX_AMPL * T2::gen(l)) as i16)?;
+        writer.write_sample((MAX_AMPL * T2::gen(r)) as i16)?;
+    }
   }
+  Ok(())
 }
 
 fn main() {
@@ -204,13 +209,13 @@ fn main() {
     let file = matches.value_of("OUTPUT").unwrap();
     match matches.value_of("SHAPE").unwrap() {
       "sine" =>
-        write_plain::<Sine>(file, dur, freq, phase, rate),
+        plain::<Sine>(file, dur, freq, phase, rate).unwrap(),
       "square" =>
-        write_plain::<Square>(file, dur, freq, phase, rate),
+        plain::<Square>(file, dur, freq, phase, rate).unwrap(),
       "triangle" =>
-        write_plain::<Triangle>(file, dur, freq, phase, rate),
+        plain::<Triangle>(file, dur, freq, phase, rate).unwrap(),
       "saw" =>
-        write_plain::<Saw>(file, dur, freq, phase, rate),
+        plain::<Saw>(file, dur, freq, phase, rate).unwrap(),
       _ =>
         panic!("Invalid value of SHAPE")
     }
@@ -224,13 +229,13 @@ fn main() {
     let file = matches.value_of("OUTPUT").unwrap();
     match matches.value_of("SHAPE").unwrap() {
       "sine" =>
-        write_combo::<Sine, Silence>(file, dur, sil, freq, phase, rate),
+        combo::<Sine, Silence>(file, dur, sil, freq, phase, rate).unwrap(),
       "square" =>
-        write_combo::<Square, Silence>(file, dur, sil, freq, phase, rate),
+        combo::<Square, Silence>(file, dur, sil, freq, phase, rate).unwrap(),
       "triangle" =>
-        write_combo::<Triangle, Silence>(file, dur, sil, freq, phase, rate),
+        combo::<Triangle, Silence>(file, dur, sil, freq, phase, rate).unwrap(),
       "saw" =>
-        write_combo::<Saw, Silence>(file, dur, sil, freq, phase, rate),
+        combo::<Saw, Silence>(file, dur, sil, freq, phase, rate).unwrap(),
       _ =>
         panic!("Invalid value of SHAPE")
     }
