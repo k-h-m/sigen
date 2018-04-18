@@ -1,11 +1,20 @@
 extern crate hound;
-extern crate clap;
+#[macro_use] extern crate clap;
 
 use std::f32::consts::PI;
 use std::i16;
-use clap::{App, Arg, SubCommand};
+use clap::{App, Arg, SubCommand, Error, ErrorKind};
 
 const MAX_AMPL: f32 = i16::MAX as f32;
+
+arg_enum!{
+    enum Shape {
+        Saw,
+        Sine,
+        Square,
+        Triangle
+    }
+}
 
 fn gen_sine(x: f32) -> f32 {
     assert!(x >= 0.0 && x < 1.0);
@@ -30,6 +39,15 @@ fn gen_triangle(x: f32) -> f32 {
 fn gen_silence(x: f32) -> f32 {
     assert!(x >= 0.0 && x < 1.0);
     0.0
+}
+
+fn shape2fn(shape: Shape) -> (fn(f32) -> f32) {
+  match shape {
+    Shape::Saw => gen_saw,
+    Shape::Sine => gen_sine,
+    Shape::Square => gen_square,
+    Shape::Triangle => gen_triangle
+  }
 }
 
 struct Tick {
@@ -79,25 +97,25 @@ impl Iterator for Tick {
     }
 }
 
-fn plain(file: &str, rate: u32, dur: f32, freq: f32,
-         phase: f32, shape: fn(f32) -> f32) -> Result<(), hound::Error> {
+fn plain(file: &str, rate: u32, dur: f32, freq: f32, phase: f32,
+         shape: Shape) -> Result<(), hound::Error> {
   let wav_spec: hound::WavSpec = hound::WavSpec {
     channels: 2,
     sample_rate: rate,
     bits_per_sample: 16,
     sample_format: hound::SampleFormat::Int
   };
+  let gen = shape2fn(shape);
   let mut writer = hound::WavWriter::create(file, wav_spec)?;
   for (l,r) in Tick::new(dur, rate as f32, freq, 0.0, phase) {
-      writer.write_sample((MAX_AMPL * shape(l)) as i16)?;
-      writer.write_sample((MAX_AMPL * shape(r)) as i16)?;
+      writer.write_sample((MAX_AMPL * gen(l)) as i16)?;
+      writer.write_sample((MAX_AMPL * gen(r)) as i16)?;
   }
   Ok(())
 }
 
-fn combo(file: &str, rate: u32, dur1: f32, dur2: f32,
-         freq: f32, shift: f32, shape1: fn(f32) -> f32,
-         shape2: fn(f32) -> f32) -> Result<(), hound::Error> {
+fn combo(file: &str, rate: u32, dur1: f32, dur2: f32, freq: f32,
+         shift: f32,shape: Shape) -> Result<(), hound::Error> {
   assert!(shift > 0.0);
   let wav_spec: hound::WavSpec = hound::WavSpec {
     channels: 2,
@@ -105,170 +123,151 @@ fn combo(file: &str, rate: u32, dur1: f32, dur2: f32,
     bits_per_sample: 16,
     sample_format: hound::SampleFormat::Int
   };
+  let gen = shape2fn(shape);
   let mut writer = hound::WavWriter::create(file, wav_spec)?;
   for n in 0 .. (360.0 / shift) as usize {
     for (l,r) in Tick::new(dur1, rate as f32, freq, 0.0, shift * (n as f32)) {
-        writer.write_sample((MAX_AMPL * shape1(l)) as i16)?;
-        writer.write_sample((MAX_AMPL * shape1(r)) as i16)?;
+        writer.write_sample((MAX_AMPL * gen(l)) as i16)?;
+        writer.write_sample((MAX_AMPL * gen(r)) as i16)?;
     }
     for (l,r) in Tick::new(dur2, rate as f32, freq, 0.0, shift * (n as f32)) {
-        writer.write_sample((MAX_AMPL * shape2(l)) as i16)?;
-        writer.write_sample((MAX_AMPL * shape2(r)) as i16)?;
+        writer.write_sample((MAX_AMPL * gen_silence(l)) as i16)?;
+        writer.write_sample((MAX_AMPL * gen_silence(r)) as i16)?;
     }
   }
   Ok(())
 }
 
-fn modulate(file: &str, rate: u32, dur: f32, freq1: f32,
-            freq2: f32, shape1: fn(f32) -> f32,
-            shape2: fn(f32) -> f32) -> Result<(), hound::Error> {
+fn modulate(file: &str, rate: u32, dur: f32, freq1: f32, freq2: f32,
+            shape1: Shape, shape2: Shape) -> Result<(), hound::Error> {
   let wav_spec: hound::WavSpec = hound::WavSpec {
     channels: 2,
     sample_rate: rate,
     bits_per_sample: 16,
     sample_format: hound::SampleFormat::Int
   };
+  let gen1 = shape2fn(shape1);
+  let gen2 = shape2fn(shape2);
   let mut writer = hound::WavWriter::create(file, wav_spec)?;
   let s1 = Tick::new(dur, rate as f32, freq1, 0.0, 0.0);
   let s2 = Tick::new(dur, rate as f32, freq2, 0.0, 0.0);
   for ((l1,r1),(l2,r2)) in s1.zip(s2) {
-    writer.write_sample((MAX_AMPL * shape1(l1) * shape2(l2)) as i16)?;
-    writer.write_sample((MAX_AMPL * shape1(r1) * shape2(r2)) as i16)?;
+    writer.write_sample((MAX_AMPL * gen1(l1) * gen2(l2)) as i16)?;
+    writer.write_sample((MAX_AMPL * gen1(r1) * gen2(r2)) as i16)?;
   }
   Ok(())
 }
 
-fn parse_shape(shape: &str) -> Option<fn(f32)->f32> {
-  match shape {
-    "sine" => Some(gen_sine),
-    "square" => Some(gen_square),
-    "triangle" => Some(gen_triangle),
-    "saw" => Some(gen_saw),
-    _ => None
-  }
-}
-
 fn main() {
   let matches = App::new("Signal generator")
+    .version(crate_version!())
+    .arg(Arg::with_name("rate")
+      .short("r")
+      .long("rate")
+      .value_name("SAMPLE_RATE")
+      .takes_value(true)
+      .default_value("44100")
+      .help("Sets a sample rate in Hz"))
+    .arg(Arg::with_name("OUTPUT")
+      .help("name of output file")
+      .required(true)
+      .index(1))
     .subcommand(SubCommand::with_name("plain")
-      .about("generate plain wave")
-      .arg(Arg::with_name("RATE")
-        .help("sample rate in Hz")
-        .required(true)
-        .index(1))
+      .about("Generates a plain wave")
       .arg(Arg::with_name("FREQ")
         .help("signal frequency in Hz")
         .required(true)
-        .index(2))
+        .index(1))
       .arg(Arg::with_name("DURATION")
         .help("signal duration in Sec")
         .required(true)
-        .index(3))
+        .index(2))
       .arg(Arg::with_name("PHASE")
         .help("phase shift in Degree")
         .required(true)
-        .index(4))
+        .index(3))
       .arg(Arg::with_name("SHAPE")
-        .help("signal shape: sine, square, saw, triangle")
+        .help("shape of signal")
         .required(true)
-        .index(5))
-      .arg(Arg::with_name("OUTPUT")
-        .help("name of output file")
-        .required(true)
-        .index(6)))
+        .possible_values(&Shape::variants())
+        .index(4)))
     .subcommand(SubCommand::with_name("combo")
-      .about("generate combo wave")
-      .arg(Arg::with_name("RATE")
-        .help("sample rate in Hz")
-        .required(true)
-        .index(1))
+      .about("Generates a combo wave")
       .arg(Arg::with_name("FREQ")
         .help("signal frequency in Hz")
         .required(true)
-        .index(2))
+        .index(1))
       .arg(Arg::with_name("DURATION")
         .help("signal duration in Sec")
         .required(true)
-        .index(3))
+        .index(2))
       .arg(Arg::with_name("SILENCE")
         .help("silence duration in Sec")
         .required(true)
-        .index(4))
+        .index(3))
       .arg(Arg::with_name("PHASE")
         .help("phase shift in Degree")
         .required(true)
-        .index(5))
+        .index(4))
       .arg(Arg::with_name("SHAPE")
-        .help("signal shape: sine, square, saw, triangle")
+        .help("shape of signal")
         .required(true)
-        .index(6))
-      .arg(Arg::with_name("OUTPUT")
-        .help("name of output file")
-        .required(true)
-        .index(7)))
+        .possible_values(&Shape::variants())
+        .index(5)))
     .subcommand(SubCommand::with_name("modulate")
-      .about("generate modulated wave")
-      .arg(Arg::with_name("RATE")
-        .help("sample rate in Hz")
-        .required(true)
-        .index(1))
+      .about("Generates a modulated wave")
       .arg(Arg::with_name("DURATION")
         .help("signal duration in Sec")
         .required(true)
-        .index(2))
+        .index(1))
       .arg(Arg::with_name("FREQ1")
         .help("first frequency in Hz")
         .required(true)
-        .index(3))
+        .index(2))
       .arg(Arg::with_name("SHAPE1")
-        .help("first shape: sine, square, saw, triangle")
+        .help("first shape")
         .required(true)
-        .index(4))
+        .possible_values(&Shape::variants())
+        .index(3))
       .arg(Arg::with_name("FREQ2")
         .help("second frequency in Hz")
         .required(true)
-        .index(5))
+        .index(4))
       .arg(Arg::with_name("SHAPE2")
-        .help("second shape: sine, square, saw, triangle")
+        .help("second shape")
         .required(true)
-        .index(6))
-      .arg(Arg::with_name("OUTPUT")
-        .help("name of output file")
-        .required(true)
-        .index(7)))
+        .possible_values(&Shape::variants())
+        .index(5)))
   .get_matches();
 
-  if let Some(matches) = matches.subcommand_matches("plain") {
-    let rate = matches.value_of("RATE").unwrap().parse::<u32>().expect("Invalid value of RATE");
-    let freq = matches.value_of("FREQ").unwrap().parse::<f32>().expect("Invalid value of FREQ");
-    let dur = matches.value_of("DURATION").unwrap().parse::<f32>().expect("Invalid value of DURATION");
-    let phase = matches.value_of("PHASE").unwrap().parse::<f32>().expect("Invalid value of PHASE");
-    let shape = parse_shape(matches.value_of("SHAPE").unwrap()).expect("Invalid value of SHAPE");
-    let file = matches.value_of("OUTPUT").unwrap();
+  let rate = value_t!(matches.value_of("rate"), u32).unwrap_or_else(|e| e.exit());
+  let file = matches.value_of("OUTPUT").unwrap();
+
+  if let Some(m) = matches.subcommand_matches("plain") {
+    let freq = value_t!(m.value_of("FREQ"), f32).unwrap_or_else(|e| e.exit());
+    let dur = value_t!(m.value_of("DURATION"), f32).unwrap_or_else(|e| e.exit());
+    let phase = value_t!(m.value_of("PHASE"), f32).unwrap_or_else(|e| e.exit());
+    let shape = value_t!(m.value_of("SHAPE"), Shape).unwrap_or_else(|e| e.exit());
     plain(file, rate, dur, freq, phase, shape).unwrap();
   }
-  else if let Some(matches) = matches.subcommand_matches("combo") {
-    let rate = matches.value_of("RATE").unwrap().parse::<u32>().expect("Invalid value of RATE");
-    let freq = matches.value_of("FREQ").unwrap().parse::<f32>().expect("Invalid value of FREQ");
-    let dur = matches.value_of("DURATION").unwrap().parse::<f32>().expect("Invalid value of DURATION");
-    let sil = matches.value_of("SILENCE").unwrap().parse::<f32>().expect("Invalid value of SILENCE");
-    let phase = matches.value_of("PHASE").unwrap().parse::<f32>().expect("Invalid value of PHASE");
-    let shape = parse_shape(matches.value_of("SHAPE").unwrap()).expect("Invalid value of SHAPE");
-    let file = matches.value_of("OUTPUT").unwrap();
-    combo(file, rate, dur, sil, freq, phase, shape, gen_silence).unwrap();
+  else if let Some(m) = matches.subcommand_matches("combo") {
+    let freq = value_t!(m.value_of("FREQ"), f32).unwrap_or_else(|e| e.exit());
+    let dur = value_t!(m.value_of("DURATION"), f32).unwrap_or_else(|e| e.exit());
+    let sil = value_t!(m.value_of("SILENCE"), f32).unwrap_or_else(|e| e.exit());
+    let phase = value_t!(m.value_of("PHASE"), f32).unwrap_or_else(|e| e.exit());
+    let shape = value_t!(m.value_of("SHAPE"), Shape).unwrap_or_else(|e| e.exit());
+    combo(file, rate, dur, sil, freq, phase, shape).unwrap();
   }
-  else if let Some(matches) = matches.subcommand_matches("modulate") {
-    let rate = matches.value_of("RATE").unwrap().parse::<u32>().expect("Invalid value of RATE");
-    let dur = matches.value_of("DURATION").unwrap().parse::<f32>().expect("Invalid value of DURATION");
-    let freq1 = matches.value_of("FREQ1").unwrap().parse::<f32>().expect("Invalid value of FREQ1");
-    let freq2 = matches.value_of("FREQ2").unwrap().parse::<f32>().expect("Invalid value of FREQ2");
-    let shape1 = parse_shape(matches.value_of("SHAPE1").unwrap()).expect("Invalid value of SHAPE1");
-    let shape2 = parse_shape(matches.value_of("SHAPE2").unwrap()).expect("Invalid value of SHAPE2");
-    let file = matches.value_of("OUTPUT").unwrap();
+  else if let Some(m) = matches.subcommand_matches("modulate") {
+    let dur = value_t!(m.value_of("DURATION"), f32).unwrap_or_else(|e| e.exit());
+    let freq1 = value_t!(m.value_of("FREQ1"), f32).unwrap_or_else(|e| e.exit());
+    let freq2 = value_t!(m.value_of("FREQ2"), f32).unwrap_or_else(|e| e.exit());
+    let shape1 = value_t!(m.value_of("SHAPE1"), Shape).unwrap_or_else(|e| e.exit());
+    let shape2 = value_t!(m.value_of("SHAPE2"), Shape).unwrap_or_else(|e| e.exit());
     modulate(file, rate, dur, freq1, freq2, shape1, shape2).unwrap();
   }
   else {
-    panic!("Invalid subcommand")
+    Error::with_description("Invalid subcommnad", ErrorKind::InvalidSubcommand).exit()
   }
 }
 
