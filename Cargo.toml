@@ -4,5 +4,5 @@ version = "0.1.0"
 authors = ["k-h-m"]
 
 [dependencies]
-clap = "2.20.0"
+clap = "2.31.0"
 hound = "3.0.0" 
