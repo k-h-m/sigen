@@ -89,7 +89,7 @@ impl Iterator for Tick {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.curr_tick >= self.last_tick {
-            return None;
+            return None
         }
         self.curr_tick += 1;
         if self.ts >= self.sample_rate {
