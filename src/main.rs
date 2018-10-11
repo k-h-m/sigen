@@ -64,22 +64,20 @@ struct Tick {
     last_tick: u32,
     sample_rate: f32,
     freq: f32,
-    left: f32,
-    right: f32,
+    ts: f32,
 }
 
 impl Tick {
-    fn new(duration: f32, sample_rate: f32, freq: f32, phase_left: f32, phase_right: f32) -> Tick {
+    fn new(sample_rate: u32, freq: f32, duration: f32, phase: f32) -> Tick {
+        let sample_rate = sample_rate as f32;
         assert!(duration >= 0.0);
         assert!(sample_rate > 0.0);
         assert!(freq > 0.0 && freq < sample_rate);
-        assert!(phase_left >= 0.0 && phase_left < 360.0);
-        assert!(phase_right >= 0.0 && phase_right < 360.0);
+        assert!(phase >= 0.0 && phase < 360.0);
         Tick {
             curr_tick: 0,
             last_tick: (duration * sample_rate) as u32,
-            left: phase_left * sample_rate / 360.0,
-            right: phase_right * sample_rate / 360.0,
+            ts: phase * sample_rate / 360.0,
             sample_rate,
             freq,
         }
@@ -87,24 +85,19 @@ impl Tick {
 }
 
 impl Iterator for Tick {
-    type Item = (f32, f32);
+    type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.curr_tick >= self.last_tick {
             return None;
         }
         self.curr_tick += 1;
-        if self.left >= self.sample_rate {
-            self.left -= self.sample_rate;
+        if self.ts >= self.sample_rate {
+            self.ts -= self.sample_rate;
         }
-        if self.right >= self.sample_rate {
-            self.right -= self.sample_rate;
-        }
-        let l = self.left / self.sample_rate;
-        let r = self.right / self.sample_rate;
-        self.left += self.freq;
-        self.right += self.freq;
-        Some((l, r))
+        let t = self.ts / self.sample_rate;
+        self.ts += self.freq;
+        Some(t)
     }
 }
 
@@ -122,11 +115,14 @@ fn plain(
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-    let gen = shape2fn(shape);
+    let shape_func = shape2fn(shape);
+    let gen_func = |x| MAX_AMPL * shape_func(x);
+    let chan_l = Tick::new(rate, freq, dur, 0.0).map(gen_func);
+    let chan_r = Tick::new(rate, freq, dur, phase).map(gen_func);
     let mut writer = hound::WavWriter::create(file, wav_spec)?;
-    for (l, r) in Tick::new(dur, rate as f32, freq, 0.0, phase) {
-        writer.write_sample((MAX_AMPL * gen(l)) as i16)?;
-        writer.write_sample((MAX_AMPL * gen(r)) as i16)?;
+    for (l, r) in chan_l.zip(chan_r) {
+        writer.write_sample(l as i16)?;
+        writer.write_sample(r as i16)?;
     }
     Ok(())
 }
@@ -150,11 +146,15 @@ fn combo(
     let gen = shape2fn(shape);
     let mut writer = hound::WavWriter::create(file, wav_spec)?;
     for n in 0..(360.0 / shift) as usize {
-        for (l, r) in Tick::new(dur1, rate as f32, freq, 0.0, shift * (n as f32)) {
+        let chan_l = Tick::new(rate, freq, dur1, 0.0);
+        let chan_r = Tick::new(rate, freq, dur1, shift * (n as f32));
+        for (l, r) in chan_l.zip(chan_r) {
             writer.write_sample((MAX_AMPL * gen(l)) as i16)?;
             writer.write_sample((MAX_AMPL * gen(r)) as i16)?;
         }
-        for (l, r) in Tick::new(dur2, rate as f32, freq, 0.0, shift * (n as f32)) {
+        let chan_l = Tick::new(rate, freq, dur2, 0.0);
+        let chan_r = Tick::new(rate, freq, dur2, shift * (n as f32));
+        for (l, r) in chan_l.zip(chan_r) {
             writer.write_sample((MAX_AMPL * gen_silence(l)) as i16)?;
             writer.write_sample((MAX_AMPL * gen_silence(r)) as i16)?;
         }
@@ -180,11 +180,11 @@ fn modulate(
     let gen1 = shape2fn(shape1);
     let gen2 = shape2fn(shape2);
     let mut writer = hound::WavWriter::create(file, wav_spec)?;
-    let s1 = Tick::new(dur, rate as f32, freq1, 0.0, 0.0);
-    let s2 = Tick::new(dur, rate as f32, freq2, 0.0, 0.0);
-    for ((l1, r1), (l2, r2)) in s1.zip(s2) {
-        writer.write_sample((MAX_AMPL * gen1(l1) * gen2(l2)) as i16)?;
-        writer.write_sample((MAX_AMPL * gen1(r1) * gen2(r2)) as i16)?;
+    let s1 = Tick::new(rate, freq1, dur, 0.0);
+    let s2 = Tick::new(rate, freq2, dur, 0.0);
+    for s in s1.zip(s2).map(|(x, y)| MAX_AMPL * gen1(x) * gen2(y)) {
+        writer.write_sample(s as i16)?;
+        writer.write_sample(s as i16)?;
     }
     Ok(())
 }
