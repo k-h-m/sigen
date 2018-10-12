@@ -3,10 +3,6 @@ extern crate hound;
 extern crate clap;
 
 use clap::{App, Arg, Error, ErrorKind, SubCommand};
-use std::f32::consts::PI;
-use std::i16;
-
-const MAX_AMPL: f32 = i16::MAX as f32;
 
 arg_enum!{
     enum Shape {
@@ -17,9 +13,20 @@ arg_enum!{
     }
 }
 
+impl Shape {
+    fn func(&self) -> (fn(f32) -> f32) {
+        match self {
+            Shape::Saw => gen_saw,
+            Shape::Sine => gen_sine,
+            Shape::Square => gen_square,
+            Shape::Triangle => gen_triangle,
+        }
+    }
+}
+
 fn gen_sine(x: f32) -> f32 {
     assert!(x >= 0.0 && x < 1.0);
-    (2.0 * PI * x).sin()
+    (2.0 * std::f32::consts::PI * x).sin()
 }
 
 fn gen_square(x: f32) -> f32 {
@@ -45,21 +52,7 @@ fn gen_triangle(x: f32) -> f32 {
     }
 }
 
-fn gen_silence(x: f32) -> f32 {
-    assert!(x >= 0.0 && x < 1.0);
-    0.0
-}
-
-fn shape2fn(shape: Shape) -> (fn(f32) -> f32) {
-    match shape {
-        Shape::Saw => gen_saw,
-        Shape::Sine => gen_sine,
-        Shape::Square => gen_square,
-        Shape::Triangle => gen_triangle,
-    }
-}
-
-struct Tick {
+struct Signal {
     curr_tick: u32,
     last_tick: u32,
     sample_rate: f32,
@@ -67,14 +60,14 @@ struct Tick {
     ts: f32,
 }
 
-impl Tick {
-    fn new(sample_rate: u32, freq: f32, duration: f32, phase: f32) -> Tick {
+impl Signal {
+    fn new(sample_rate: u32, freq: f32, duration: f32, phase: f32) -> Self {
         let sample_rate = sample_rate as f32;
         assert!(duration >= 0.0);
         assert!(sample_rate > 0.0);
         assert!(freq > 0.0 && freq < sample_rate);
         assert!(phase >= 0.0 && phase < 360.0);
-        Tick {
+        Signal {
             curr_tick: 0,
             last_tick: (duration * sample_rate) as u32,
             ts: phase * sample_rate / 360.0,
@@ -84,12 +77,12 @@ impl Tick {
     }
 }
 
-impl Iterator for Tick {
+impl Iterator for Signal {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.curr_tick >= self.last_tick {
-            return None
+            return None;
         }
         self.curr_tick += 1;
         if self.ts >= self.sample_rate {
@@ -99,6 +92,40 @@ impl Iterator for Tick {
         self.ts += self.freq;
         Some(t)
     }
+}
+
+struct Silence {
+    curr_tick: u32,
+    last_tick: u32,
+}
+
+impl Silence {
+    fn new(sample_rate: u32, duration: f32) -> Self {
+        let sample_rate = sample_rate as f32;
+        assert!(duration >= 0.0);
+        assert!(sample_rate > 0.0);
+        Silence {
+            curr_tick: 0,
+            last_tick: (duration * sample_rate) as u32,
+        }
+    }
+}
+
+impl Iterator for Silence {
+    type Item = i16;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.curr_tick >= self.last_tick {
+            return None;
+        }
+        self.curr_tick += 1;
+        Some(0)
+    }
+}
+
+fn adjust_volume(x: f32) -> i16 {
+    let max_ampl = std::i16::MAX as f32;
+    (x * max_ampl) as i16
 }
 
 fn plain(
@@ -115,14 +142,16 @@ fn plain(
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-    let shape_func = shape2fn(shape);
-    let gen_func = |x| MAX_AMPL * shape_func(x);
-    let chan_l = Tick::new(rate, freq, dur, 0.0).map(gen_func);
-    let chan_r = Tick::new(rate, freq, dur, phase).map(gen_func);
+    let chan_l = Signal::new(rate, freq, dur, 0.0)
+        .map(shape.func())
+        .map(adjust_volume);
+    let chan_r = Signal::new(rate, freq, dur, phase)
+        .map(shape.func())
+        .map(adjust_volume);
     let mut writer = hound::WavWriter::create(file, wav_spec)?;
     for (l, r) in chan_l.zip(chan_r) {
-        writer.write_sample(l as i16)?;
-        writer.write_sample(r as i16)?;
+        writer.write_sample(l)?;
+        writer.write_sample(r)?;
     }
     Ok(())
 }
@@ -143,20 +172,21 @@ fn combo(
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-    let gen = shape2fn(shape);
     let mut writer = hound::WavWriter::create(file, wav_spec)?;
     for n in 0..(360.0 / shift) as usize {
-        let chan_l = Tick::new(rate, freq, dur1, 0.0);
-        let chan_r = Tick::new(rate, freq, dur1, shift * (n as f32));
+        let chan_l = Signal::new(rate, freq, dur1, 0.0)
+            .map(shape.func())
+            .map(adjust_volume);
+        let chan_r = Signal::new(rate, freq, dur1, shift * (n as f32))
+            .map(shape.func())
+            .map(adjust_volume);
         for (l, r) in chan_l.zip(chan_r) {
-            writer.write_sample((MAX_AMPL * gen(l)) as i16)?;
-            writer.write_sample((MAX_AMPL * gen(r)) as i16)?;
+            writer.write_sample(l)?;
+            writer.write_sample(r)?;
         }
-        let chan_l = Tick::new(rate, freq, dur2, 0.0);
-        let chan_r = Tick::new(rate, freq, dur2, shift * (n as f32));
-        for (l, r) in chan_l.zip(chan_r) {
-            writer.write_sample((MAX_AMPL * gen_silence(l)) as i16)?;
-            writer.write_sample((MAX_AMPL * gen_silence(r)) as i16)?;
+        for s in Silence::new(rate, dur2) {
+            writer.write_sample(s)?;
+            writer.write_sample(s)?;
         }
     }
     Ok(())
@@ -177,14 +207,13 @@ fn modulate(
         bits_per_sample: 16,
         sample_format: hound::SampleFormat::Int,
     };
-    let gen1 = shape2fn(shape1);
-    let gen2 = shape2fn(shape2);
+    let s1 = Signal::new(rate, freq1, dur, 0.0);
+    let s2 = Signal::new(rate, freq2, dur, 0.0);
     let mut writer = hound::WavWriter::create(file, wav_spec)?;
-    let s1 = Tick::new(rate, freq1, dur, 0.0);
-    let s2 = Tick::new(rate, freq2, dur, 0.0);
-    for s in s1.zip(s2).map(|(x, y)| MAX_AMPL * gen1(x) * gen2(y)) {
-        writer.write_sample(s as i16)?;
-        writer.write_sample(s as i16)?;
+    let func = |(x, y)| adjust_volume(shape1.func()(x) * shape2.func()(y));
+    for s in s1.zip(s2).map(func) {
+        writer.write_sample(s)?;
+        writer.write_sample(s)?;
     }
     Ok(())
 }
