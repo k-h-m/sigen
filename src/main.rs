@@ -201,7 +201,7 @@ fn modulate(
     shape1: Shape,
     shape2: Shape,
 ) -> Result<(), hound::Error> {
-    let wav_spec: hound::WavSpec = hound::WavSpec {
+    let wav_spec = hound::WavSpec {
         channels: 2,
         sample_rate: rate,
         bits_per_sample: 16,
