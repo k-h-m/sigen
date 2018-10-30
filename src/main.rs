@@ -124,6 +124,7 @@ impl Iterator for Silence {
 }
 
 fn adjust_volume(x: f32) -> i16 {
+    assert!(x >= -1.0 && x <= 1.0);
     let max_ampl = std::i16::MAX as f32;
     (x * max_ampl) as i16
 }
