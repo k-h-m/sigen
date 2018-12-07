@@ -2,6 +2,7 @@
 name = "sigen"
 version = "0.1.0"
 authors = ["k-h-m"]
+edition = "2018"
 
 [dependencies]
 clap = "2.31.0"
